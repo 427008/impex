@@ -1,0 +1,11 @@
+{% extends "base_generic.html" %}
+
+{% block content %}
+  <h1>Импорт прием на пути</h1>
+  <h2>Результаты загрузки:</h2>
+
+  {% for table in report %}
+    <br>
+    {{ table.0 }}: добавлено {{ table.1 }} изменено {{ table.2 }} удалено {{ table.3 }}
+  {% endfor %}
+{% endblock %}
