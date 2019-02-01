@@ -385,7 +385,7 @@ class RwbGtd(BaseTable):
     @staticmethod
     def query_insert():
         query = """INSERT INTO adapter_rwbgtd (key_number, cargo, cargo_net, doc_date,
-                date_import, md5hash, date_export) VALUES (?, ?, ?, ?,  ?, ?, 0)"""
+                md5hash, date_import, date_export) VALUES (?, ?, ?, ?,  ?, ?, 0)"""
         return query
 
     @staticmethod
@@ -395,7 +395,7 @@ class RwbGtd(BaseTable):
     @staticmethod
     def query_update():
         query = """UPDATE adapter_rwbgtd SET cargo=?, cargo_net=?, doc_date=?,
-                date_import=?, md5hash=?, date_export=0 WHERE key_number=?"""
+                md5hash=?, date_import=?, date_export=0 WHERE key_number=?"""
         return query
 
     @staticmethod
