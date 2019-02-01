@@ -77,8 +77,8 @@ def imported(request):
         logger.info(time.strftime('%H:%M:%S'))
 
     context = {
+        'caption': 'Импорт справочников',
         'report': report_added,
-        'errors': errors_list,
     }
 
-    return render(request, 'imported.html', context=context)
+    return render(request, 'dicts.html', context=context)

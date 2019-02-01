@@ -21,8 +21,8 @@ def imported(request):
         logger.info(time.strftime('%H:%M:%S'))
 
     context = {
+        'caption': 'Создания адаптера "прием на пути"',
         'report': report_added,
-        'errors': errors_list,
     }
 
-    return render(request, 'imported.html', context=context)
+    return render(request, 'adapter.html', context=context)

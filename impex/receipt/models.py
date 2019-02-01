@@ -82,31 +82,28 @@ class RwbReceipt(BaseTable):
     def csv_ext(rec):
         ret = None
         err = None
-        if len(rec) < 15:
+        if len(rec) < 11:
             err = ';'.join(rec) + f': мало данных ({len(rec)})'
-        else:
-            if rec[0] == '':
-                err = ';'.join(rec) + ': плохой ключ'
-            else:
-                while len(rec) < 16:
-                    rec.append('')
+        elif rec[0] != '':
+            while len(rec) < 16:
+                rec.append('')
 
-                key = rec[0]
-                doc_date = utils.date_format(rec[2])
-                sender = int(rec[3]) if rec[3] else 0
-                recipient = int(rec[4]) if rec[4] else 0
-                cargo = int(rec[6]) if rec[6] else 0
+            key = rec[0]
+            doc_date = utils.date_format(rec[2])
+            sender = int(rec[3]) if rec[3] else 0
+            recipient = int(rec[4]) if rec[4] else 0
+            cargo = int(rec[6]) if rec[6] else 0
 
-                qty = int(rec[7]) if rec[7] else 0
-                getcontext().prec = 4
-                cargo_net = str(Decimal(rec[8])) if rec[8] else '0.0'
-                contract = int(rec[11]) if rec[11] else 0
-                customer = int(rec[12]) if rec[12] else 0
-                recipient2 = int(rec[14]) if rec[14] else 0
-                station = int(rec[15]) if rec[15] else 0
+            qty = int(rec[7]) if rec[7] else 0
+            getcontext().prec = 4
+            cargo_net = str(Decimal(rec[8])) if rec[8] else '0.0'
+            contract = int(rec[11]) if rec[11] else 0
+            customer = int(rec[12]) if rec[12] else 0
+            recipient2 = int(rec[14]) if rec[14] else 0
+            station = int(rec[15]) if rec[15] else 0
 
-                ret = (key, doc_date, sender, recipient, cargo,
-                       qty, cargo_net, contract, customer, recipient2, station,)
+            ret = (key, doc_date, sender, recipient, cargo,
+                   qty, cargo_net, contract, customer, recipient2, station,)
 
         return ret, err
 
@@ -150,7 +147,12 @@ class RwbReceiptCar(BaseTable):
             err = ';'.join(rec + [f'мало данных: {len(rec)}'])
         else:
             key = ':'.join([rec[0], rec[2]])
-            if (key in trash and rec[1] == 'б/н') or rec[0] == '' or rec[2] == '':
+            if key == ':':
+                return ret, err
+            if key in trash and rec[1] == 'б/н':
+                return ret, err
+
+            if rec[0] == '' or rec[2] == '':
                 err = ';'.join(rec + [f'плохой ключ: {key}'])
             else:
                 while len(rec) < 36:
@@ -197,15 +199,12 @@ class Gtd(BaseTable):
         err = None
         if len(rec) < 4:
             err = ';'.join(rec + [f'мало данных: {len(rec)}'])
-        else:
-            if rec[0] == '' or rec[1] == '':
-                err = ';'.join(rec + [f'плохой ключ: {rec[0]} {rec[1]}'])
-            else:
-                cargo = int(rec[1]) if rec[1] else 0
-                getcontext().prec = 4
-                cargo_net = str(Decimal(rec[2])) if rec[2] else '0.0'
-                doc_date = utils.date_format(rec[3])
-                ret = (rec[0], cargo, cargo_net, doc_date,)
+        elif rec[0] != '':
+            cargo = int(rec[1]) if rec[1] else 0
+            getcontext().prec = 4
+            cargo_net = str(Decimal(rec[2])) if rec[2] else '0.0'
+            doc_date = utils.date_format(rec[3])
+            ret = (rec[0], cargo, cargo_net, doc_date,)
 
         return ret, err
 
@@ -243,18 +242,19 @@ class RwbReceiptNoticeTime(BaseTable):
             err = ';'.join(rec + [f'мало данных: {len(rec)}'])
         else:
             key = ':'.join([rec[0], rec[1], rec[2]])
-            if rec[0] == '' or rec[1] == '' or rec[2] == '':
-                err = ';'.join(rec + [f'плохой ключ: {key}'])
-            else:
-                # route, memo,
-                notice = int(rec[2]) if rec[2] else 0
-                path_no = int(rec[3]) if rec[3] else 0
-                in_date = utils.date_format(rec[4])
-                in_time = utils.time_format(rec[5])
-                end_date = utils.date_format(rec[6])
-                end_time = utils.time_format(rec[7])
+            if key != '::':
+                if rec[0] == '' or rec[1] == '' or rec[2] == '':
+                    err = ';'.join(rec + [f'плохой ключ: {key}'])
+                else:
+                    # route, memo,
+                    notice = int(rec[2]) if rec[2] else 0
+                    path_no = int(rec[3]) if rec[3] else 0
+                    in_date = utils.date_format(rec[4])
+                    in_time = utils.time_format(rec[5])
+                    end_date = utils.date_format(rec[6])
+                    end_time = utils.time_format(rec[7])
 
-                ret = (key, rec[0], rec[1], notice, path_no, in_date, in_time, end_date, end_time,)
+                    ret = (key, rec[0], rec[1], notice, path_no, in_date, in_time, end_date, end_time,)
 
         return ret, err
 
@@ -291,18 +291,29 @@ class RwbReceiptCarTime(BaseTable):
 
     @staticmethod
     def csv_ext(rec):
+        trash1 = ['301199', '301200', '415767', '00083568', '00083569', '00126763', '00126789', '00902912', '00916454',
+                  '00917958', '072508', 'Е902888-', 'Е916370']
         ret = None
         err = None
 
-        if len(rec) < 35:
+        if len(rec) < 22:
             err = ';'.join(rec) + f': мало данных ({len(rec)})'
         else:
-            key = ':'.join([rec[0], rec[2]])
-            if rec[0] == '' or rec[2] == '':
+            key = ':'.join([rec[0], rec[1]])
+            if key == ':':
+                return ret, err
+
+            if rec[0] in trash1:
+                return ret, err
+
+            if ''.join(rec[2:35]) == '':
+                return ret, err
+
+            if rec[0] == '' or rec[1] == '':
                 err = ';'.join(rec + [f'плохой ключ: {key}'])
             else:
-                # while len(rec) < 52:
-                #     rec.append('')
+                while len(rec) < 35:
+                    rec.append('')
 
                 key = ':'.join([rec[0], rec[1]])
 
@@ -328,6 +339,19 @@ class RwbReceiptCarTime(BaseTable):
         query = """UPDATE receipt_rwbreceiptcartime SET rwbill_no=?, car_no=?, doc_date=?, doc_time=?,  
             get_date=?, get_time=?, route=?, memo=?, notice=?, md5hash=?, date_import=? WHERE key_number=?"""
         return query
+
+
+class RcwError(models.Model):
+
+    date_import = models.IntegerField(default=0)
+    data = models.TextField()
+    file_name = models.CharField(max_length=50)
+
+    def __str__(self):
+        import time
+
+        t = time.gmtime(self.date_import)
+        return time.strftime('%Y-%m-%d', t)
 
 
 def all_tables():
