@@ -248,7 +248,7 @@ class RwbReceiptMemo(BaseTable):
             source_name = f'{RwbReceiptMemo.source_base}.sqlite3'
             cursor.execute(f"ATTACH DATABASE '{connection_str(source_name)}' AS S")
             query = f"""SELECT key_number, route, memo, notice, path_no, in_date, in_time, end_date, end_time, 
-                md5hash, date_import FROM S.receipt_rwbreceiptnoticetime 
+                md5hash, date_import FROM S.receipt_memotime
                 WHERE date_import>{max_date_import1}"""
             cursor.execute(query)
             receiptmemo = {row[0]: (row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9],
