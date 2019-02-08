@@ -8,7 +8,7 @@ def execute_many(values, cn, cur, command):
 
 
 def date_format(data):
-    ret = datetime.fromordinal(int(data)+672046).strftime('%Y-%m-%d') if data.isdigit() else _T2000
+    ret = datetime.fromordinal(int(data)+672046).strftime('%Y-%m-%d') if data.isdigit() else t2000()
     return ret
 
 
@@ -19,4 +19,5 @@ def time_format(data):
     return ret
 
 
-_T2000 = datetime(2000, 1, 1).strftime('%Y-%m-%d')
+def t2000():
+    return datetime(2000, 1, 1).strftime('%Y-%m-%d')

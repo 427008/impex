@@ -325,6 +325,18 @@ class RwbReceiptMemoCar(BaseTable):
             inserted_count, updated_count = BaseTable.add_directly(RwbReceiptMemoCar, hashed_receipt, current_adapter,
                                                                    receipt_memo_car)
 
+        # select errors.key_number, memo.route, memo.memo, memo.notice
+        # from (select A.key_number, A.rwbill_no, A.car_no
+        # from receipt_rwbreceiptcartime A
+        # left join receipt_memotime B
+        # on A.route=B.route and A.memo=B.memo and A.notice=B.notice
+        # where B.key_number is null) errors
+        # left join receipt_memocar memo
+        # on errors.rwbill_no=memo.rwbill_no and errors.car_no=memo.car_no
+        # where memo.route is not null
+
+
+
         return deleted_count, inserted_count, updated_count
 
     @staticmethod

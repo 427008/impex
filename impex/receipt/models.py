@@ -79,16 +79,23 @@ class RwbReceipt(BaseTable):
         return f'{self.key_number} от {self.doc_date}'
 
     @staticmethod
+    def large_trash():
+        return []
+
+    @staticmethod
     def csv_ext(rec):
         ret = None
         err = None
         if len(rec) < 11:
             err = ';'.join(rec) + f': мало данных ({len(rec)})'
         elif rec[0] != '':
+            key = rec[0]
+            if key in RwbReceipt.large_trash():
+                return ret, err
+
+            key = key.replace('.', '*')
             while len(rec) < 16:
                 rec.append('')
-
-            key = rec[0]
             doc_date = utils.date_format(rec[2])
             sender = int(rec[3]) if rec[3] else 0
             recipient = int(rec[4]) if rec[4] else 0
@@ -137,10 +144,13 @@ class RwbReceiptCar(BaseTable):
     owner = models.IntegerField(default=0)
 
     @staticmethod
+    def trash():
+        return ["021087:59596064", "021087:59597062", "021087:59806570", "021087:59806877", "021087:59807008",
+                "021087:59807271", "021087:59813881", "021087:59814053", "021087:59814525", "021087:59831388",
+                "021087:59831743", 'Б/Н', 'Б/Н1', 'Б/Н.', 'б/н']
+
+    @staticmethod
     def csv_ext(rec):
-        trash = ["021087:59596064", "021087:59597062", "021087:59806570", "021087:59806877", "021087:59807008",
-                 "021087:59807271", "021087:59813881", "021087:59814053", "021087:59814525", "021087:59831388",
-                 "021087:59831743"]
         ret = None
         err = None
         if len(rec) < 10:
@@ -149,12 +159,18 @@ class RwbReceiptCar(BaseTable):
             key = ':'.join([rec[0], rec[2]])
             if key == ':':
                 return ret, err
-            if key in trash and rec[1] == 'б/н':
+            if key in RwbReceiptCar.trash() and rec[1] == 'б/н':
+                return ret, err
+            if rec[2] in RwbReceiptCar.trash():
                 return ret, err
 
             if rec[0] == '' or rec[2] == '':
                 err = ';'.join(rec + [f'плохой ключ: {key}'])
+            elif not rec[2].isdigit():
+                err = f'плохой вагон: {rec[2]}'
             else:
+                rwbill = rec[0].replace('.', '*')
+                key = ':'.join([rwbill, rec[2]])
                 while len(rec) < 36:
                     rec.append('')
 
@@ -167,7 +183,7 @@ class RwbReceiptCar(BaseTable):
                 contract_trade = int(rec[34]) if rec[34] else 0
                 owner = int(rec[35]) if rec[35] else 0
 
-                ret = (key, rec[0], rec[2], cargo_net, contract, gtd, condition, state, contract_trade, owner,)
+                ret = (key, rwbill, rec[2], cargo_net, contract, gtd, condition, state, contract_trade, owner,)
 
         return ret, err
 
@@ -221,7 +237,7 @@ class Gtd(BaseTable):
         return query
 
 
-class RwbReceiptNoticeTime(BaseTable):
+class MemoTime(BaseTable):
     external_name = 'B49S1'
 
     route = models.CharField(max_length=50)
@@ -235,40 +251,108 @@ class RwbReceiptNoticeTime(BaseTable):
     end_time = models.CharField(max_length=5)
 
     @staticmethod
+    def replace(key, default):
+        dict = {'memo': (['0', '00', '000', '0000', '00000', '0000000', '000000000', '0000000000', 'юююю', 'ююю', 'юю',
+                          'жжж', '99999999', '999999', '99999', '+', '+++', '+++++', '..', '....', '.........', '////'],
+                         'б/н', )}
+        if key in dict.keys() and default in dict[key][0]:
+            return dict[key][1]
+
+        return default
+
+    @staticmethod
     def csv_ext(rec):
         ret = None
         err = None
         if len(rec) < 6:
             err = ';'.join(rec + [f'мало данных: {len(rec)}'])
         else:
-            key = ':'.join([rec[0], rec[1], rec[2]])
-            if key != '::':
+            if ':'.join([rec[0], rec[1], rec[2]]) != '::':
                 if rec[0] == '' or rec[1] == '' or rec[2] == '':
-                    err = ';'.join(rec + [f'плохой ключ: {key}'])
+                    err = ';'.join(rec + ['плохой ключ'])
                 else:
-                    # route, memo,
-                    notice = int(rec[2]) if rec[2] else 0
-                    path_no = int(rec[3]) if rec[3] else 0
+                    memo = MemoTime.replace('memo', rec[1])
+                    notice = rec[2] if rec[2].isdigit() and rec[2] != '0' else '1'
+                    key = ':'.join([rec[0], memo, notice])
+
+                    path_no = int(rec[3]) if rec[3] else 1
                     in_date = utils.date_format(rec[4])
                     in_time = utils.time_format(rec[5])
                     end_date = utils.date_format(rec[6])
                     end_time = utils.time_format(rec[7])
 
-                    ret = (key, rec[0], rec[1], notice, path_no, in_date, in_time, end_date, end_time,)
+                    ret = (key, rec[0], memo, notice, path_no, in_date, in_time, end_date, end_time,)
 
         return ret, err
 
     @staticmethod
     def query_insert():
-        query = """INSERT INTO receipt_rwbreceiptnoticetime (key_number, route, memo, notice, path_no, 
+        query = """INSERT INTO receipt_memotime (key_number, route, memo, notice, path_no, 
                 in_date, in_time, end_date, end_time, md5hash, date_import)
                 VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?)"""
         return query
 
     @staticmethod
     def query_update():
-        query = """UPDATE receipt_rwbreceiptnoticetime SET route=?, memo=?, notice=?, path_no=?, 
+        query = """UPDATE receipt_memotime SET route=?, memo=?, notice=?, path_no=?, 
                 in_date=?, in_time=?, end_date=?, end_time=?, md5hash=?, date_import=? WHERE key_number=?"""
+        return query
+
+
+class MemoCar(BaseTable):
+    external_name = 'B49S2'
+
+    route = models.CharField(max_length=50)
+    memo = models.CharField(max_length=50)
+    notice = models.IntegerField(default=0)
+    rwbill_no = models.CharField(max_length=50)
+    car_no = models.CharField(max_length=10)
+
+    @staticmethod
+    def trash():
+        return ['353941.', 'Б/Н', 'Б/Н1', 'Б/Н.', 'б/н']
+
+    @staticmethod
+    def replace(key, default):
+        dict = {'memo': (['0', '00', '000', '0000', '00000', '0000000', '000000000', '0000000000', 'юююю', 'ююю',
+                          'юю', 'жжж', '99999999', '999999', '99999', '+', '+++', '+++++', '..', '....', '.........',
+                          '////'], 'б/н', )}
+        if key in dict.keys() and default in dict[key][0]:
+            return dict[key][1]
+
+        return default
+
+    @staticmethod
+    def csv_ext(rec):
+        ret = None
+        err = None
+        if len(rec) < 5:
+            err = ';'.join(rec + [f'мало данных: {len(rec)}'])
+        else:
+            if rec[4] not in MemoCar.trash() and rec[3] not in MemoCar.trash():
+                if '' in rec:
+                    err = f'плохой ключ'
+                elif not rec[4].isdigit():
+                    err = f'плохой вагон: {rec[4]}'
+                else:
+                    rwbill = rec[3].replace('.', '*')
+                    memo = MemoCar.replace('memo', rec[1])
+                    notice = rec[2] if rec[2].isdigit() and rec[2] != '0' else '1'
+                    key = ':'.join([rec[0], memo, notice, rwbill, rec[4]])
+                    ret = (key, rec[0], memo, notice, rwbill, rec[4], )
+
+        return ret, err
+
+    @staticmethod
+    def query_insert():
+        query = """INSERT INTO receipt_memocar (key_number, route, memo, notice, rwbill_no, 
+                car_no, md5hash, date_import) VALUES (?, ?, ?, ?, ?,  ?, ?, ?)"""
+        return query
+
+    @staticmethod
+    def query_update():
+        query = """UPDATE receipt_memocar SET route=?, memo=?, notice=?, rwbill_no=?, 
+                car_no=?, md5hash=?, date_import=? WHERE key_number=?"""
         return query
 
 
@@ -290,9 +374,27 @@ class RwbReceiptCarTime(BaseTable):
         return f'{self.key_number} от {self.doc_date}'
 
     @staticmethod
+    def replace(key, default):
+        dict = {'memo': (['', '0', '00', '000', '0000', '00000', '0000000', '000000000', '0000000000', 'юююю', 'ююю',
+                          'юю', 'жжж', '99999999', '999999', '99999', '+', '+++', '+++++', '..', '....', '.........',
+                          '////'], 'б/н', )}
+        if key in dict.keys() and default in dict[key][0]:
+            return dict[key][1]
+
+        return default
+
+
+    @staticmethod
+    def trash():
+        return ['301199', '301200', '415767', '00083568', '00083569', '00126763', '00126789', '00902912', '00916454',
+                '00917958', '072508', 'Е902888-', 'Е916370', 'Б/Н', 'Б/Н1', 'Б/Н.', 'б/н']
+
+    @staticmethod
+    def large_trash():
+        return []
+
+    @staticmethod
     def csv_ext(rec):
-        trash1 = ['301199', '301200', '415767', '00083568', '00083569', '00126763', '00126789', '00902912', '00916454',
-                  '00917958', '072508', 'Е902888-', 'Е916370']
         ret = None
         err = None
 
@@ -303,7 +405,10 @@ class RwbReceiptCarTime(BaseTable):
             if key == ':':
                 return ret, err
 
-            if rec[0] in trash1:
+            if rec[0] in RwbReceiptCarTime.trash() or rec[1] in RwbReceiptCarTime.trash():
+                return ret, err
+
+            if key in RwbReceiptCarTime.large_trash():
                 return ret, err
 
             if ''.join(rec[2:35]) == '':
@@ -311,19 +416,49 @@ class RwbReceiptCarTime(BaseTable):
 
             if rec[0] == '' or rec[1] == '':
                 err = ';'.join(rec + [f'плохой ключ: {key}'])
+            elif not rec[1].isdigit():
+                err = f'плохой вагон: {rec[1]}'
             else:
                 while len(rec) < 35:
                     rec.append('')
 
-                key = ':'.join([rec[0], rec[1]])
+                rwbill = rec[0].replace('.', '*')
+                key = ':'.join([rwbill, rec[1]])
 
                 doc_date = utils.date_format(rec[4])
                 doc_time = utils.time_format(rec[5])
                 get_date = utils.date_format(rec[6])
                 get_time = utils.time_format(rec[7])
-                notice = int(rec[34]) if rec[34] else 0
 
-                ret = (key, rec[0], rec[1], doc_date, doc_time, get_date, get_time, rec[32], rec[33], notice, )
+                if rwbill == '916436' and rec[32] == '':
+                    rec[32] = '59014.4'
+                    doc_date = '2002-07-29'
+                    doc_time = '21:00'
+                    get_date = '2002-07-29'
+                    get_time = '21:00'
+                if rwbill == '916448' and rec[32] == '':
+                    rec[32] = '59038.13'
+                    doc_date = '2002-08-22'
+                    doc_time = '4:00'
+                    get_date = '2002-08-23'
+                    get_time = '14:35'
+                if rwbill == 'Е916413' and rec[32] == '':
+                    rec[32] = '58981.1'
+                    doc_date = '2002-06-25'
+                    doc_time = '13:00'
+                    get_date = '2002-06-25'
+                    get_time = '13:00'
+                memo = RwbReceiptCarTime.replace('memo', rec[33])
+                notice = rec[34] if rec[34].isdigit() and rec[34] != '0' else '1'
+
+                if doc_date == utils.t2000() and get_date != utils.t2000():
+                    doc_date = get_date
+                    doc_time = get_time
+                if get_date == utils.t2000() and doc_date != utils.t2000():
+                    get_date = doc_date
+                    get_time = doc_time
+
+                ret = (key, rwbill, rec[1], doc_date, doc_time, get_date, get_time, rec[32], memo, notice, )
 
         return ret, err
 

@@ -23,6 +23,11 @@ def imported(request):
         table_dict = {c[0]: c[1] for c in model.objects.values_list('md5hash', 'key_number')}
         file_dict = {}
         t0 = time.time()
+        if hasattr(model, 'large_trash'):
+            trash = []
+            with open(f'{file_path}\{model.external_name}_trash.csv', buffering=20480) as trash_file:
+                trash = [key.strip() for key in trash_file.readlines()]
+            model.large_trash = lambda: trash
 
         with open(f'{file_path}\{model.external_name}.gof', buffering=16777216) as fr:
             i = 0
