@@ -7,6 +7,8 @@ class BaseTable(models.Model):
     class Meta:
         abstract = True
 
+    separator_pos = 0
+    separator_set = set()
     key_number = models.CharField(max_length=255, unique=True)
     date_import = models.IntegerField(default=0)
     md5hash = models.CharField(max_length=32, default='')
@@ -18,12 +20,13 @@ class BaseTable(models.Model):
     def query_delete(name):
         return f'DELETE FROM {name} WHERE key_number=?'
 
-    @staticmethod
-    def add_directly(obj, ext_dict, current_dict):
+    @classmethod
+    def add_directly(cls: object, ext_dict: dict, current_dict: dict, only_old_data: bool):
         import time
 
         inserted_count = 0
         updated_count = 0
+        separator_pos = cls.separator_pos
         diff = set(ext_dict) - set(current_dict)
         if diff:
             insert_list = []
@@ -33,16 +36,19 @@ class BaseTable(models.Model):
 
             for md5hash in diff:
                 key = ext_dict[md5hash][0]
-                data = ext_dict[md5hash][1]
+                data = ext_dict[md5hash]
+                if separator_pos is None or \
+                    (only_old_data and data[separator_pos] in BaseTable.separator_set) or \
+                    (not only_old_data and data[separator_pos] not in BaseTable.separator_set):
 
-                if key in current_dict.values():
-                    update_list.append(data[1:] + (md5hash, t, data[0],))
-                else:
-                    insert_list.append(data + (md5hash, t,))
+                    if key in current_dict.values():
+                        update_list.append(data[1:] + (md5hash, t, data[0],))
+                    else:
+                        insert_list.append(data + (md5hash, t,))
 
-            crud_directly(obj.query_update(), update_list)
+            crud_directly(cls.query_update(), update_list)
             updated_count = len(update_list)
-            crud_directly(obj.query_insert(), insert_list)
+            crud_directly(cls.query_insert(), insert_list)
             inserted_count = len(insert_list)
 
         return inserted_count, updated_count
@@ -62,6 +68,7 @@ class BaseTable(models.Model):
 
 class RwbReceipt(BaseTable):
     external_name = 'B1'
+    large_trash = set()
 
     doc_date = models.CharField(max_length=50)
     sender = models.IntegerField(default=0)
@@ -79,19 +86,18 @@ class RwbReceipt(BaseTable):
         return f'{self.key_number} от {self.doc_date}'
 
     @staticmethod
-    def large_trash():
-        return []
-
-    @staticmethod
-    def csv_ext(rec):
+    def csv_ext(rec, only_old_data):
         ret = None
         err = None
         if len(rec) < 11:
-            err = ';'.join(rec) + f': мало данных ({len(rec)})'
-        elif rec[0] != '':
+            return ret, ';'.join(rec) + f': мало данных ({len(rec)})'
+
+        if rec[0] != '':
             key = rec[0]
-            if key in RwbReceipt.large_trash():
+            if only_old_data is False and key in BaseTable.separator_set:
                 return ret, err
+            if key in RwbReceipt.large_trash:
+                return ret, f'{key} исключается(мусор)'
 
             key = key.replace('.', '*')
             while len(rec) < 16:
@@ -130,27 +136,42 @@ class RwbReceipt(BaseTable):
 
 
 class RwbReceiptCar(BaseTable):
+    # 13	? Отправлено (всего)
     external_name = 'B2'
+    separator_pos = 1
+    large_trash = set()
 
-    rwbill_no = models.CharField(max_length=50)
-    car_no = models.CharField(max_length=10)
-    cargo_net = models.CharField(max_length=50)
-    contract = models.IntegerField(default=0)
-    gtd = models.CharField(max_length=50)
+    rwbill_no = models.CharField(max_length=50)         # 0	    Номер основной жд накладной
+    act_no = models.CharField(max_length=50)            # 1	    Номер приходного акта
+    car_no = models.CharField(max_length=10)            # 2	    Номер жд вагона
+    get_date = models.CharField(max_length=50)          # 5	    Дата окончания выгрузки
+    get_time = models.CharField(max_length=5)           # 6	    Время окончания выгрузки
 
-    condition = models.IntegerField(default=0)
-    state = models.IntegerField(default=0)
-    contract_trade = models.IntegerField(default=0)
-    owner = models.IntegerField(default=0)
+    store_section = models.IntegerField(default=0)      # 8	    Номер секции/склада выгрузки
+    section_no = models.CharField(max_length=50)        # 22	Номер секции
+    cargo_net = models.CharField(max_length=50)         # 9	    Вес нетто вагона по документам принято
+    cargo_net_fact = models.CharField(max_length=50)    # 10	Вес нетто вагона по факту
+    npp = models.IntegerField(default=0)                # 19	Порядковый номер гр ваг в составе фактически
+
+    contract = models.IntegerField(default=0)           # 14	Номер договора/контракта
+    gtd = models.CharField(max_length=50)               # 15	Номер груз там декларации
+    sert_to = models.CharField(max_length=50)           # 17	Номера сертификатов качества и происхождения
+    condition = models.IntegerField(default=0)          # 20	Состояние вагона
+
+    custom_no = models.CharField(max_length=50)         # 31	Номер таможенного учета
+    custom_net = models.CharField(max_length=50)        # 32	Передекларированный вес
+    custom_gtd = models.CharField(max_length=50)        # 33	Номер декларации
+    contract_new = models.IntegerField(default=0)       # 34	Номер договора - новый
+    owner = models.IntegerField(default=0)              # 35	Владелец
 
     @staticmethod
     def trash():
         return ["021087:59596064", "021087:59597062", "021087:59806570", "021087:59806877", "021087:59807008",
                 "021087:59807271", "021087:59813881", "021087:59814053", "021087:59814525", "021087:59831388",
-                "021087:59831743", 'Б/Н', 'Б/Н1', 'Б/Н.', 'б/н']
+                "021087:59831743"]
 
     @staticmethod
-    def csv_ext(rec):
+    def csv_ext(rec, only_old_data):
         ret = None
         err = None
         if len(rec) < 10:
@@ -159,58 +180,116 @@ class RwbReceiptCar(BaseTable):
             key = ':'.join([rec[0], rec[2]])
             if key == ':':
                 return ret, err
-            if key in RwbReceiptCar.trash() and rec[1] == 'б/н':
-                return ret, err
-            if rec[2] in RwbReceiptCar.trash():
-                return ret, err
-
             if rec[0] == '' or rec[2] == '':
-                err = ';'.join(rec + [f'плохой ключ: {key}'])
-            elif not rec[2].isdigit():
-                err = f'плохой вагон: {rec[2]}'
-            else:
-                rwbill = rec[0].replace('.', '*')
-                key = ':'.join([rwbill, rec[2]])
-                while len(rec) < 36:
-                    rec.append('')
+                err = f'плохой ключ: {key}'
+            if only_old_data is False and rec[0] in BaseTable.separator_set:
+                return ret, err
+            if key in RwbReceiptCar.trash() and rec[1] == 'б/н':
+                return ret, f'накладная+вагон {key} имеют дубль'
+            if not rec[2].isdigit():
+                return ret, f'вагон {key} - дефектный номер вагона'
+            if rec[0] in RwbReceiptCar.large_trash:
+                return ret, f'{key} исключается(мусор)'
+            while len(rec) < 36:
+                rec.append('')
+            if rec[21].isdigit() and int(rec[21]) == 2:
+                return ret, f'{key} вагон не принят'
 
-                getcontext().prec = 4
-                cargo_net = str(Decimal(rec[9])) if rec[9] else '0.0'
-                contract = int(rec[14]) if rec[14] else 0
-                gtd = rec[15]
-                condition = int(rec[20]) if rec[20] else 0
-                state = int(rec[21]) if rec[21] else 0
-                contract_trade = int(rec[34]) if rec[34] else 0
-                owner = int(rec[35]) if rec[35] else 0
+            # if rec[0]=='ЭГ337863':
+            #     err = ';'.join(rec)
+            #     return ret, f'{err} XXX'
 
-                ret = (key, rwbill, rec[2], cargo_net, contract, gtd, condition, state, contract_trade, owner,)
+            rwbill = rec[0].replace('.', '*')
+            key = ':'.join([rwbill, rec[2]])
+            get_date = utils.date_format(rec[5])
+            get_time = utils.time_format(rec[6])
+
+            store_section = int(rec[8]) if rec[8] else 0
+            section_no = rec[22]
+            getcontext().prec = 4
+            cargo_net = str(Decimal(rec[9])) if rec[9] else '0.0'
+            cargo_net_fact = str(Decimal(rec[10])) if rec[10] else '0.0'
+            npp = int(rec[19]) if rec[19] and rec[19].isdigit() else 0
+
+            contract = int(rec[14]) if rec[14] else 0
+            gtd = rec[15]
+            sert_to = rec[17]
+            condition = int(rec[20]) if rec[20] else 0  # dicts_defects (5 == 'ПЕРЕАДРЕСОВАН', ....)
+
+            custom_no = rec[31]
+            custom_net = str(Decimal(rec[32])) if rec[32] else '0.0'
+            custom_gtd = rec[33]
+            contract_trade = int(rec[34]) if rec[34] else 0
+            owner = int(rec[35]) if rec[35] else 0
+
+            ret = (key, rwbill, rec[1], rec[2], get_date, get_time,
+                   store_section, section_no, cargo_net, cargo_net_fact, npp,
+                   contract, gtd, sert_to, condition, custom_no, custom_net, custom_gtd, contract_trade, owner, )
 
         return ret, err
 
     @staticmethod
     def query_insert():
-        query = """INSERT INTO receipt_rwbreceiptcar (key_number, rwbill_no, car_no, cargo_net, contract, gtd,
-                condition, state, contract_trade, owner, md5hash, date_import)
-                VALUES (?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?)"""
+        query = """INSERT INTO receipt_rwbreceiptcar (key_number, rwbill_no, act_no, car_no, get_date, get_time, 
+                   store_section, section_no, cargo_net, cargo_net_fact, npp, 
+                   contract, gtd, sert_to, condition, custom_no, custom_net, custom_gtd, contract_new, owner, 
+                   md5hash, date_import)
+                VALUES (?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?)"""
         return query
 
     @staticmethod
     def query_update():
-        query = """UPDATE receipt_rwbreceiptcar SET rwbill_no=?, car_no=?, cargo_net=?, contract=?, gtd=?,
-                condition=?, state=?, contract_trade=?, owner=?, md5hash=?, date_import=?  
+        query = """UPDATE receipt_rwbreceiptcar SET rwbill_no=?, act_no=?, car_no=?, get_date=?, get_time=?, 
+                   store_section=?, section_no=?, cargo_net=?, cargo_net_fact=?, npp=?, 
+                   contract=?, gtd=?, sert_to=?, condition=?, custom_no=?, custom_net=?, custom_gtd=?, contract_new=?, 
+                   owner=?, md5hash=?, date_import=?   
                 WHERE key_number=?"""
         return query
+
+    @staticmethod
+    def check_data(only_old_data):
+        query1 = """select count(*) from receipt_rwbreceipt A 
+                      left join receipt_rwbreceiptcar B 
+                      on A.key_number=B.rwbill_no where B.rwbill_no is null;"""
+
+        query2 = """select count(*) from receipt_rwbreceiptcar A 
+                      left join receipt_rwbreceipt B
+                      on B.key_number=A.rwbill_no where B.key_number is null;"""
+
+        query3 = """select A.rwbill_no, count(*) 
+                    from (select distinct rwbill_no, contract from receipt_rwbreceiptcar) A
+                    group by rwbill_no having count(*)>1"""
+
+        # -- 1. receipt_rwbreceipt -> receipt_rwbreceiptcar - д.б. 0 записей
+        # --    для всех вагонов должна быть накладная (и наоборот)
+        # -- 2. receipt_rwbreceiptcar -> receipt_rwbreceipt - д.б. 0 записей
+        # --    для всех вагонов должна быть накладная (и наоборот)
+
+        result = execute_check(query1, query2, query3)
+        if result[0][0][0] != 0 or result[1][0][0] != 0:
+            ret = []
+            if result[0][0][0] != 0:
+                ret.append(f'Есть накладные ({result[0][0][0]}шт) RwbReceipt(B1) без вагонов RwbReceiptCar(B2).')
+            if result[1][0][0] != 0:
+                ret.append(f'Есть вагоны ({result[1][0][0]}шт) RwbReceiptCar(B2) без накладной RwbReceipt(B1)!')
+        else:
+            ret = ['В RwbReceipt(B1) и в RwbReceiptCar(B2) записей без подчиненных(без главной) нет.']
+            if len(result[2]) > 0:
+                ret.append(f'Есть накладные с контрактами 1:2 ({len(result[2])}шт) RwbReceiptCar(B2) (норма 1:1)')
+
+        return ret
 
 
 class Gtd(BaseTable):
     external_name = 'B65'
 
+    separator_pos = None
     cargo = models.IntegerField(default=0)
     cargo_net = models.CharField(max_length=50)
     doc_date = models.CharField(max_length=10)
 
     @staticmethod
-    def csv_ext(rec):
+    def csv_ext(rec, only_old_data):
         ret = None
         err = None
         if len(rec) < 4:
@@ -236,9 +315,28 @@ class Gtd(BaseTable):
                 md5hash=?, date_import=? WHERE key_number=?"""
         return query
 
+    @staticmethod
+    def check_data(only_old_data):
+        query1 = """select distinct A.gtd, C.doc_date from receipt_rwbreceiptcar A
+                    inner join receipt_rwbreceipt C on A.rwbill_no=C.key_number
+                    left join receipt_gtd B on B.key_number=A.gtd
+                    where B.key_number is null order by C.doc_date desc;"""
+
+        #-- 7. receipt_rwbreceiptcar -> receipt_gtd - д.б. 0 записей
+        # --   для всех вагонов должна быть гтд
+
+        result = execute_check(query1)
+        errors_count = len(result[0])
+        if errors_count > 0:
+            return [f'Есть вагоны RwbReceiptCar(B2) с гтд без записи в справочнике Gtd(B65). Всего {errors_count}.']
+
+        return ['В Gtd(B65) и в RwbReceiptCar(B2) записей без подчиненных(без главной) нет.']
+
 
 class MemoTime(BaseTable):
     external_name = 'B49S1'
+    separator_pos = None
+    skip_for_old_data = True
 
     route = models.CharField(max_length=50)
     memo = models.CharField(max_length=50)
@@ -261,7 +359,7 @@ class MemoTime(BaseTable):
         return default
 
     @staticmethod
-    def csv_ext(rec):
+    def csv_ext(rec, only_old_data):
         ret = None
         err = None
         if len(rec) < 6:
@@ -301,6 +399,8 @@ class MemoTime(BaseTable):
 
 class MemoCar(BaseTable):
     external_name = 'B49S2'
+    separator_pos = 4
+    skip_for_old_data = True
 
     route = models.CharField(max_length=50)
     memo = models.CharField(max_length=50)
@@ -323,12 +423,14 @@ class MemoCar(BaseTable):
         return default
 
     @staticmethod
-    def csv_ext(rec):
+    def csv_ext(rec, only_old_data):
         ret = None
         err = None
         if len(rec) < 5:
             err = ';'.join(rec + [f'мало данных: {len(rec)}'])
         else:
+            if only_old_data is False and rec[3] in BaseTable.separator_set:
+                return ret, err
             if rec[4] not in MemoCar.trash() and rec[3] not in MemoCar.trash():
                 if '' in rec:
                     err = f'плохой ключ'
@@ -355,16 +457,62 @@ class MemoCar(BaseTable):
                 car_no=?, md5hash=?, date_import=? WHERE key_number=?"""
         return query
 
+    @staticmethod
+    def check_data(only_old_data):
+        query1 = 'select count(*) from receipt_memocar where route is null;'
+        query2 = """select count(*) from receipt_rwbreceiptcartime A inner join receipt_memocar B 
+                    on A.rwbill_no=B.rwbill_no and A.car_no=B.car_no 
+                    where A.route<>B.route;"""
+        query3 = """select A.get_date from receipt_rwbreceiptcartime A left join receipt_memocar B
+                    on A.rwbill_no=B.rwbill_no and A.car_no=B.car_no
+                    where B.route is null order by A.get_date desc"""
+        #-- 1. receipt_memocar
+        #--    ненормально - для пары вагон+накладная нет значения маршрута, д.б. 0 записей
+        #-- 2. receipt_rwbreceiptcartime
+        #--    в receipt_memocar и receipt_rwbreceiptcartime должны совпадать маршруты A.route == B.route, д.б. 0 записей
+        #-- 3. receipt_rwbreceiptcartime -> receipt_memocar
+        #--    в receipt_memocar можно найти маршруты для receipt_rwbreceiptcartime , д.б. 0 записей
+
+        result = execute_check(query1, query2, query3)
+        errors_count = len(result[2])
+        if result[0][0][0] != 0 or result[1][0][0] != 0 or errors_count > 0:
+            ret = []
+            if result[0][0][0] != 0:
+                ret.append(f'Есть вагоны ({result[0][0][0]}шт) MemoCar(B49S2) без маршрута!.')
+            if result[1][0][0] != 0:
+                ret.append(f'Есть вагоны ({result[1][0][0]}шт) RwbReceiptCarTime(B59) '
+                           f'маршрут которых отличается от MemoCar(B49S2).')
+            if errors_count > 0:
+                errors_18 = len([r for r in result[2][0] if r[0] > '2015-12-31'])
+                ret.append(f'Есть вагоны RwbReceiptCarTime(B59) без подчиненных MemoCar(B49S2). ' \
+                           f'Всего {errors_count}, новых {errors_18}.')
+            return ret
+
+        return ['В RwbReceiptCarTime(B59) и в MemoCar(B49S2) записей без подчиненных(без главной) нет.']
+
 
 class RwbReceiptCarTime(BaseTable):
     external_name = 'B59'
+    separator_creator = 1
+    separator_pos = 1
+    large_trash = set()
+    trash = {'301199', '301200', '415767', '00083568', '00083569', '00126763', '00126789', '00902912', '00916454',
+            '00917958', '072508', 'Е902888-', 'Е916370', '301198', '311701', '75443266', '75443546', '75448506',
+            '75448517', '78120300', '78120813', '800913', 'М191960', 'М191961'}
 
     rwbill_no = models.CharField(max_length=50)
     car_no = models.CharField(max_length=10)
-    doc_date = models.CharField(max_length=50)
-    doc_time = models.CharField(max_length=5)
-    get_date = models.CharField(max_length=50)
-    get_time = models.CharField(max_length=5)
+    doc_date = models.CharField(max_length=50)                  # Дата вручения памятки
+    doc_time = models.CharField(max_length=5)                   # Время вручения памятки
+    get_date = models.CharField(max_length=50)                  # Дата факт подачи с Автово
+    get_time = models.CharField(max_length=5)                   # Время факт подачи
+
+    put_date = models.CharField(max_length=50, default='')      # Дата фактич выгрузки
+    put_time = models.CharField(max_length=5, default='')       # Время фактич выгрузки
+    doc_out_date = models.CharField(max_length=50, default='')  # Дата факт. уборки вагонов с путей ББТ
+    doc_out_time = models.CharField(max_length=5, default='')   # Время фактического вывода
+    out_date = models.CharField(max_length=50, default='')      # Дата факт. уборки вагонов с путей ББТ
+    out_time = models.CharField(max_length=5, default='')       # Время фактического вывода
 
     route = models.CharField(max_length=50, default='')
     memo = models.CharField(max_length=50, default='')
@@ -385,95 +533,141 @@ class RwbReceiptCarTime(BaseTable):
 
 
     @staticmethod
-    def trash():
-        return ['301199', '301200', '415767', '00083568', '00083569', '00126763', '00126789', '00902912', '00916454',
-                '00917958', '072508', 'Е902888-', 'Е916370', 'Б/Н', 'Б/Н1', 'Б/Н.', 'б/н']
-
-    @staticmethod
-    def large_trash():
-        return []
-
-    @staticmethod
-    def csv_ext(rec):
+    def csv_ext(rec, only_old_data):
         ret = None
         err = None
 
         if len(rec) < 22:
             err = ';'.join(rec) + f': мало данных ({len(rec)})'
         else:
-            key = ':'.join([rec[0], rec[1]])
-            if key == ':':
-                return ret, err
-
-            if rec[0] in RwbReceiptCarTime.trash() or rec[1] in RwbReceiptCarTime.trash():
-                return ret, err
-
-            if key in RwbReceiptCarTime.large_trash():
-                return ret, err
-
             if ''.join(rec[2:35]) == '':
                 return ret, err
+            if rec[0] in BaseTable.separator_set:
+                return ret, err
 
+            key = ':'.join([rec[0], rec[1]])
             if rec[0] == '' or rec[1] == '':
                 err = ';'.join(rec + [f'плохой ключ: {key}'])
-            elif not rec[1].isdigit():
-                err = f'плохой вагон: {rec[1]}'
-            else:
-                while len(rec) < 35:
-                    rec.append('')
+            if rec[0] in RwbReceiptCarTime.trash or rec[1] in RwbReceiptCarTime.trash:
+                return ret, f'{key} содержит мусор'
+            if not rec[1].isdigit():
+                return ret, f'{key} - ошибка в номере вагона'
+            if key in RwbReceiptCarTime.large_trash:
+                return ret, f'{key} ошибки в данных'
 
-                rwbill = rec[0].replace('.', '*')
-                key = ':'.join([rwbill, rec[1]])
+            while len(rec) < 35:
+                rec.append('')
 
-                doc_date = utils.date_format(rec[4])
-                doc_time = utils.time_format(rec[5])
-                get_date = utils.date_format(rec[6])
-                get_time = utils.time_format(rec[7])
+            rwbill = rec[0].replace('.', '*')
+            key = ':'.join([rwbill, rec[1]])
 
-                if rwbill == '916436' and rec[32] == '':
-                    rec[32] = '59014.4'
-                    doc_date = '2002-07-29'
-                    doc_time = '21:00'
-                    get_date = '2002-07-29'
-                    get_time = '21:00'
-                if rwbill == '916448' and rec[32] == '':
-                    rec[32] = '59038.13'
-                    doc_date = '2002-08-22'
-                    doc_time = '4:00'
-                    get_date = '2002-08-23'
-                    get_time = '14:35'
-                if rwbill == 'Е916413' and rec[32] == '':
-                    rec[32] = '58981.1'
-                    doc_date = '2002-06-25'
-                    doc_time = '13:00'
-                    get_date = '2002-06-25'
-                    get_time = '13:00'
-                memo = RwbReceiptCarTime.replace('memo', rec[33])
-                notice = rec[34] if rec[34].isdigit() and rec[34] != '0' else '1'
+            doc_date = utils.date_format(rec[4])
+            doc_time = utils.time_format(rec[5])
+            get_date = utils.date_format(rec[6])
+            get_time = utils.time_format(rec[7])
 
-                if doc_date == utils.t2000() and get_date != utils.t2000():
-                    doc_date = get_date
-                    doc_time = get_time
-                if get_date == utils.t2000() and doc_date != utils.t2000():
-                    get_date = doc_date
-                    get_time = doc_time
+            if rwbill == '916436' and rec[32] == '':
+                rec[32] = '59014.4'
+                doc_date = '2002-07-29'
+                doc_time = '21:00'
+                get_date = '2002-07-29'
+                get_time = '21:00'
+            if rwbill == '916448' and rec[32] == '':
+                rec[32] = '59038.13'
+                doc_date = '2002-08-22'
+                doc_time = '4:00'
+                get_date = '2002-08-23'
+                get_time = '14:35'
+            if rwbill == 'Е916413' and rec[32] == '':
+                rec[32] = '58981.1'
+                doc_date = '2002-06-25'
+                doc_time = '13:00'
+                get_date = '2002-06-25'
+                get_time = '13:00'
+            memo = RwbReceiptCarTime.replace('memo', rec[33])
+            notice = rec[34] if rec[34].isdigit() and rec[34] != '0' else '1'
 
-                ret = (key, rwbill, rec[1], doc_date, doc_time, get_date, get_time, rec[32], memo, notice, )
+            if doc_date == utils.t2000() and get_date != utils.t2000():
+                doc_date = get_date
+                doc_time = get_time
+            if get_date == utils.t2000() and doc_date != utils.t2000():
+                get_date = doc_date
+                get_time = doc_time
+
+            put_date = utils.date_format(rec[12])
+            put_time = utils.time_format(rec[13])
+
+            doc_out_date = utils.date_format(rec[24])
+            doc_out_time = utils.time_format(rec[25])
+            out_date = utils.date_format(rec[26])
+            out_time = utils.time_format(rec[27])
+            if out_date == utils.t2000() and doc_out_date != utils.t2000():
+                out_date = doc_out_date
+                out_time = doc_out_time
+
+            ret = (key, rwbill, rec[1], doc_date, doc_time, get_date, get_time, rec[32], memo, notice,
+                   put_date, put_time, doc_out_date, doc_out_time, out_date, out_time, )
 
         return ret, err
 
     @staticmethod
     def query_insert():
         query = """INSERT INTO receipt_rwbreceiptcartime (key_number, rwbill_no, car_no, 
-                doc_date, doc_time, get_date, get_time, route, memo, notice, md5hash, date_import)
-                VALUES (?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?)"""
+                doc_date, doc_time, get_date, get_time, route, memo, notice, 
+                put_date, put_time, doc_out_date, doc_out_time, out_date, out_time, 
+                md5hash, date_import) VALUES (?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?)"""
         return query
 
     @staticmethod
     def query_update():
         query = """UPDATE receipt_rwbreceiptcartime SET rwbill_no=?, car_no=?, doc_date=?, doc_time=?,  
-            get_date=?, get_time=?, route=?, memo=?, notice=?, md5hash=?, date_import=? WHERE key_number=?"""
+            get_date=?, get_time=?, route=?, memo=?, notice=?, put_date=?, put_time=?, doc_out_date=?, doc_out_time=?,  
+            out_date=?, out_time=?, md5hash=?, date_import=? WHERE key_number=?"""
         return query
+
+    @staticmethod
+    def check_data(only_old_data):
+        if(only_old_data):
+            query1 = """select A.rwbill_no from receipt_rwbreceiptcar A
+                        left join receipt_rwbreceiptcartime B on A.key_number=B.key_number
+                        where B.key_number is null;"""
+
+        else:
+            query1 = """select distinct A.rwbill_no, C.doc_date from receipt_rwbreceiptcar A
+                        inner join receipt_rwbreceipt C on A.rwbill_no=C.key_number
+                        left join receipt_rwbreceiptcartime B on A.key_number=B.key_number
+                        where C.doc_date<'2019-01-01' and B.key_number is null;"""
+
+        query2 = """select A.rwbill_no from receipt_rwbreceiptcartime A
+                    left join receipt_rwbreceiptcar B on A.key_number=B.key_number 
+                    where B.key_number is null;"""
+
+        query3 = "select count(*) from receipt_rwbreceiptcartime where out_date='2000-01-01'"
+
+        #-- 3. receipt_rwbreceiptcar -> receipt_rwbreceiptcartime
+        #--    для всех вагонов(+накладная) должно быть соответствие.
+        #--    ненормально - есть вагон+накладная, нет записи о прибытии, д.б. 0 записей
+
+        #-- 4. receipt_rwbreceiptcartime -> receipt_rwbreceiptcar
+        #--    ненормально - есть время нет пары вагон+накладная, д.б. 0 записей
+
+        result = execute_check(query1, query2, query3)
+        ret = []
+        if len(result[0]) != 0 or result[2][0][0] != 0:
+            if len(result[0]) != 0:
+                ret.append(f'Есть вагоны ({len(result[0])}шт) RwbReceiptCar(B2) ' \
+                      f'без записи о времени обработки RwbReceiptCarTime(B59).')
+            if len(result[1]) != 0:
+                ret.append(f'Есть обработанные вагоны ({len(result[1])}шт) RwbReceiptCarTime(B59) ' \
+                               f'без записи в накладной RwbReceiptCar(B2).')
+            if result[2][0][0] != 0:
+                ret.append(f'Есть вагоны без даты и времени возврата ({result[2][0][0]}шт) RwbReceiptCarTime(B59).')
+            return ret
+
+        if result[2][0][0] != 0:
+            ret.append(f'Есть вагоны без даты и времени возврата ({result[2][0][0]}шт) RwbReceiptCarTime(B59).')
+        ret.append(['В RwbReceiptCarTime(B59) и в RwbReceiptCar(B2) записей без подчиненных(без главной) нет.'])
+        return ret
 
 
 class RcwError(models.Model):
@@ -489,6 +683,13 @@ class RcwError(models.Model):
         return time.strftime('%Y-%m-%d', t)
 
 
+class Separator(models.Model):
+    key_number = models.CharField(max_length=255, unique=True)
+
+    def __str__(self):
+        return self.key_number
+
+
 def all_tables():
     from sys import modules
     from inspect import getmembers, isclass
@@ -496,17 +697,35 @@ def all_tables():
     current_module = modules[__name__]
     x = [obj for _, obj in getmembers(current_module, isclass)]
     y = [obj for obj in x if hasattr(obj, 'external_name')]
-    return y
+    z = sorted(y, key=lambda obj: not hasattr(obj, 'separator_creator'))
+    return z
 
 
 def crud_directly(query, values):
     import sqlite3
-    from os.path import abspath, dirname, join
+    from os.path import join
     from .apps import ReceiptConfig
     from impex import utils
+    from impex import settings
 
-    BASE_DIR = dirname(dirname(abspath(__file__)))
     base_name = f'{ReceiptConfig.name}.sqlite3'
-    with sqlite3.connect(join(BASE_DIR, base_name)) as conn:
+    with sqlite3.connect(join(settings.BASE_DIR, base_name)) as conn:
         cursor = conn.cursor()
         utils.execute_many(values, conn, cursor, query)
+
+
+def execute_check(*queries):
+    import sqlite3
+    from os.path import join
+    from .apps import ReceiptConfig
+    from impex import settings
+
+    result = []
+    base_name = f'{ReceiptConfig.name}.sqlite3'
+    with sqlite3.connect(join(settings.BASE_DIR, base_name)) as conn:
+        cursor = conn.cursor()
+        for query in queries:
+            cursor.execute(query)
+            result.append(cursor.fetchall())
+
+    return result

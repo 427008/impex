@@ -7,4 +7,9 @@
     <br>
     {{ table.0 }}: добавлено {{ table.1 }} изменено {{ table.2 }} удалено {{ table.3 }}
   {% endfor %}
+    <br>
+  {% for line in message %}
+    <br>
+    {{ line }}
+  {% endfor %}
 {% endblock %}

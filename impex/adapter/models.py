@@ -71,6 +71,7 @@ class RwbReceipt(BaseTable):
     station = models.IntegerField(default=0)
 
     gtd = models.TextField(default='')
+    contract2 = models.IntegerField(default=0)
 
     def __str__(self):
         return f'{self.key_number} от {self.doc_date}'
@@ -130,30 +131,86 @@ class RwbReceipt(BaseTable):
         return deleted_count, inserted_count, updated_count
 
     @staticmethod
+    def insert_from_source():
+        import sqlite3
+
+        with sqlite3.connect(connection_str()) as conn:
+            cursor = conn.cursor()
+            # max_date_import1 = max_date_import('adapter_rwbreceipt', cursor)
+            # max_date_import2 = max_date_import('adapter_rwbreceiptcar', cursor)
+            current_adapter = current_hash('adapter_rwbreceipt', cursor)
+
+            # start with receipt from receipt_rwbreceipt
+            source_name = f'{RwbReceipt.source_base}.sqlite3'
+            cursor.execute(f"ATTACH DATABASE '{connection_str(source_name)}' AS S")
+            query = f"""SELECT key_number, doc_date, sender, recipient, cargo,
+                qty, cargo_net, contract, customer, recipient2, station, date_import FROM S.receipt_rwbreceipt"""
+            cursor.execute(query)
+            receipt0 = {row[0]: [(row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9],
+                                 row[10], ), (row[11], )] for row in cursor.fetchall()}
+
+            # add contract2
+            query = 'select distinct rwbill_no, contract from S.receipt_rwbreceiptcar'
+            cursor.execute(query)
+            contract_rows = {row[0]: (row[1], ) for row in cursor.fetchall()}
+
+            # add to receipt_rwbreceipt gtd from receipt_rwbreceiptcar:
+            #   get gtd
+            query = f"""select key_number, B.gtd, count(B.gtd) from S.receipt_rwbreceipt A
+                inner join (select distinct rwbill_no, gtd from S.receipt_rwbreceiptcar) B 
+                on A.key_number = B.rwbill_no group by key_number"""
+            cursor.execute(query)
+            gtd_rows = cursor.fetchall()
+            gtd_rows1 = {t[0]: (t[1], ) for t in gtd_rows if t[2] == 1}       # 1 rwbill - 1 gtd
+
+            gtd_rowsn = {}
+            gtd_rows2 = {t[0] for t in gtd_rows if t[2] != 1}                 # 1 rwbill - n gtd
+            for key in gtd_rows2:
+                query = f"select distinct gtd from S.receipt_rwbreceiptcar where rwbill_no=?"
+                cursor.execute(query, (key, ))
+                gtd_rows = [row[0] for row in cursor.fetchall()]
+                gtd_rowsn[key] = (';'.join(gtd_rows), )
+            gtd_rows2 = None
+
+            #   add gtd to receipt_rwbreceipt
+            gtd_rows = {**gtd_rows1, **gtd_rowsn}
+            receipt = {key: receipt0.get(key)[0] + gtd_rows.get(key, ('', )) +
+                            contract_rows.get(key, (0, )) + receipt0.get(key)[1]
+                       for key in set(receipt0)}
+
+            hashed_receipt = {md5(str(rec[:-1]).encode('utf-8')).hexdigest(): key for key, rec in receipt.items()}
+
+            # check hash for deleted
+            deleted_count = 0 # BaseTable.delete_directly(RwbReceipt, hashed_receipt, current_adapter)
+
+            # check hash for new
+            inserted_count, updated_count = BaseTable.add_directly(RwbReceipt, hashed_receipt, current_adapter, receipt)
+
+        return deleted_count, inserted_count, updated_count
+
+    @staticmethod
     def query_insert():
         query = f"""INSERT INTO adapter_rwbreceipt (key_number, doc_date, sender, recipient, cargo, 
-            qty, cargo_net, contract, customer, recipient2, station, gtd,  
-            md5hash, date_import, date_export)
-            VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?,  ?, ?, 0)"""
+            qty, cargo_net, contract, customer, recipient2, station, gtd, contract2,   
+            date_import, md5hash, date_export)
+            VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?,  ?, ?, 0)"""
         return query
 
     @staticmethod
     def prepare_insert(data, md5hash):
-        # .. (from receipt_rwbreceipt) date_import[-3], (from receipt_rwbreceiptcar) gtd[-2], date_import[-1]
-        return data[:-3] + (data[-2], md5hash, max(data[-3], data[-1]),)
+        return data + (md5hash, )
 
     @staticmethod
     def query_update():
         query = f"""UPDATE adapter_rwbreceipt SET doc_date=?, sender=?, recipient=?, cargo=?,  
-            qty=?, cargo_net=?, contract=?, customer=?, recipient2=?, station=?, gtd=?,  
-            md5hash=?, date_import=?, date_export=0 
+            qty=?, cargo_net=?, contract=?, customer=?, recipient2=?, station=?, gtd=?, contract2=?,  
+            date_import=?, md5hash=?, date_export=0   
             WHERE key_number=?"""
         return query
 
     @staticmethod
     def prepare_update(data, md5hash):
-        # .. (from receipt_rwbreceipt) date_import[-3], (from receipt_rwbreceiptcar) gtd[-2], date_import[-1]
-        return data[1:-3] + (data[-2], md5hash, max(data[-3], data[-1]), data[0],)
+        return data[1:] + (md5hash, data[0], )
 
 
 class RwbReceiptCar(BaseTable):
@@ -169,6 +226,7 @@ class RwbReceiptCar(BaseTable):
     state = models.IntegerField(default=0)
     contract_trade = models.IntegerField(default=0)
     owner = models.IntegerField(default=0)
+    npp = models.IntegerField(default=0)
 
     @staticmethod
     def update_from_source():
@@ -183,11 +241,11 @@ class RwbReceiptCar(BaseTable):
             source_name = f'{RwbReceiptCar.source_base}.sqlite3'
             cursor.execute(f"ATTACH DATABASE '{connection_str(source_name)}' AS S")
             query = f"""SELECT key_number, rwbill_no, car_no, cargo_net, contract, gtd,
-            condition, state, contract_trade, owner, date_import FROM S.receipt_rwbreceiptcar 
+            condition, state, contract_trade, owner, npp, date_import FROM S.receipt_rwbreceiptcar 
             WHERE date_import>{max_date_import1}"""
             cursor.execute(query)
-            receipt = {row[0]: (row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10],)
-                       for row in cursor.fetchall()}
+            receipt = {row[0]: (row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9],
+                                row[10], row[11], ) for row in cursor.fetchall()}
 
             hashed_receipt = {md5(str(rec[:-1]).encode('utf-8')).hexdigest(): key for key, rec in receipt.items()}
 
@@ -202,8 +260,8 @@ class RwbReceiptCar(BaseTable):
     @staticmethod
     def query_insert():
         query = f"""INSERT INTO adapter_rwbreceiptcar (key_number, rwbill_no, car_no, cargo_net, contract, gtd,
-            condition, state, contract_trade, owner, date_import, md5hash, date_export)
-            VALUES (?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, 0)"""
+            condition, state, contract_trade, owner, npp, date_import, md5hash, date_export)
+            VALUES (?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, 0)"""
         return query
 
     @staticmethod
@@ -213,7 +271,7 @@ class RwbReceiptCar(BaseTable):
     @staticmethod
     def query_update():
         query = f"""UPDATE adapter_rwbreceiptcar SET rwbill_no=?, car_no=?, cargo_net=?, contract=?, gtd=?,  
-            condition=?, state=?, contract_trade=?, owner=?, date_import=?, md5hash=?, date_export=0 
+            condition=?, state=?, contract_trade=?, owner=?, npp=?, date_import=?, md5hash=?, date_export=0 
             WHERE key_number=?"""
         return query
 
@@ -415,13 +473,20 @@ class RwbGtd(BaseTable):
         return data[1:] + (data[0], )
 
 
-def all_tables():
+class Mode(models.Model):
+    new_data = models.IntegerField(default=0)
+
+
+def all_tables(insert=False):
     from sys import modules
     from inspect import getmembers, isclass
 
     current_module = modules[__name__]
     x = [obj for _, obj in getmembers(current_module, isclass)]
-    y = [obj for obj in x if hasattr(obj, 'update_from_source')]
+    if insert:
+        y = [obj for obj in x if hasattr(obj, 'insert_from_source')]
+    else:
+        y = [obj for obj in x if hasattr(obj, 'update_from_source')]
     return y
 
 
